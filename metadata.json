@@ -1,0 +1,7 @@
+{
+  "name": "componion",
+  "description": "A prototyping playground for a note-taking app that helps you sit with your confusion rather than solving it.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
