@@ -35,10 +35,19 @@
       }
     </script>
     <style>
-      body {
+      /* Ensure full height and prevent default scrolling so App controls it */
+      html, body {
+        height: 100%;
+        width: 100%;
+        margin: 0;
+        overflow: hidden;
         background-color: #f0f0f0;
         background-image: radial-gradient(#d1d5db 1px, transparent 1px);
         background-size: 24px 24px;
+      }
+      #root {
+        height: 100%;
+        width: 100%;
       }
       .hide-scrollbar::-webkit-scrollbar {
         display: none;
@@ -62,5 +71,6 @@
 </head>
   <body>
     <div id="root"></div>
+    <script type="module" src="./index.tsx"></script>
   </body>
 </html>
