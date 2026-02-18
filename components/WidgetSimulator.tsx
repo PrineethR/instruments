@@ -1,29 +1,36 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Zap, Aperture, Maximize, Grid3X3, Circle, Play, Plus, Minus, ChevronUp, ChevronDown, Clock, Check } from 'lucide-react';
+import { Zap, Aperture, Maximize, Grid3X3, Circle, Play, Plus, Minus, ChevronUp, ChevronDown, Clock, Check, Mic, MicOff, Power, Radio } from 'lucide-react';
 
 // --- Shared Chassis Component ---
 const Chassis: React.FC<{ children: React.ReactNode; label: string; active?: boolean }> = ({ children, label, active }) => (
   <div className="flex flex-col items-center gap-6 group perspective-1000">
     <div className={`
-      w-[320px] h-[340px] bg-[#E3E2DE] rounded-[32px] p-3 shadow-2xl flex flex-col relative overflow-hidden
+      w-[320px] h-[340px] bg-[#E3E2DE] rounded-[32px] p-4 shadow-2xl flex flex-col relative overflow-hidden
       transition-all duration-500 ease-out transform group-hover:rotate-x-2 group-hover:rotate-y-2
       border border-white/40 ring-1 ring-black/5
     `}>
-      {/* Screw holes */}
-      <div className="absolute top-3 left-3 w-1.5 h-1.5 rounded-full bg-stone-400/30 inset-shadow"></div>
-      <div className="absolute top-3 right-3 w-1.5 h-1.5 rounded-full bg-stone-400/30 inset-shadow"></div>
-      <div className="absolute bottom-3 left-3 w-1.5 h-1.5 rounded-full bg-stone-400/30 inset-shadow"></div>
-      <div className="absolute bottom-3 right-3 w-1.5 h-1.5 rounded-full bg-stone-400/30 inset-shadow"></div>
+      {/* Noise Texture Overlay */}
+      <div className="absolute inset-0 opacity-5 pointer-events-none bg-[url('https://grainy-gradients.vercel.app/noise.svg')] mix-blend-multiply"></div>
+
+      {/* Screw holes - Industrial Detail */}
+      <div className="absolute top-3 left-3 w-2 h-2 rounded-full bg-stone-400/30 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.3),1px_1px_0_white]">
+        <div className="absolute inset-0.5 border border-stone-500/50 rounded-full"></div>
+      </div>
+      <div className="absolute top-3 right-3 w-2 h-2 rounded-full bg-stone-400/30 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.3),1px_1px_0_white]">
+        <div className="absolute inset-0.5 border border-stone-500/50 rounded-full"></div>
+      </div>
+      <div className="absolute bottom-3 left-3 w-2 h-2 rounded-full bg-stone-400/30 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.3),1px_1px_0_white]">
+        <div className="absolute inset-0.5 border border-stone-500/50 rounded-full"></div>
+      </div>
+      <div className="absolute bottom-3 right-3 w-2 h-2 rounded-full bg-stone-400/30 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.3),1px_1px_0_white]">
+         <div className="absolute inset-0.5 border border-stone-500/50 rounded-full"></div>
+      </div>
       
       {/* Content */}
-      <div className="flex-1 w-full relative z-10">
+      <div className="flex-1 w-full relative z-10 flex flex-col">
         {children}
       </div>
 
-      {/* Active Light */}
-      {active && (
-        <div className="absolute top-4 right-1/2 translate-x-1/2 w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_red]"></div>
-      )}
     </div>
     
     <div className="text-center space-y-1 opacity-60 group-hover:opacity-100 transition-opacity">
@@ -36,55 +43,262 @@ const Chassis: React.FC<{ children: React.ReactNode; label: string; active?: boo
 // --- Component 1: The Listener (Audio) ---
 export const AudioWidget = () => {
   const [isRecording, setIsRecording] = useState(false);
-  const [duration, setDuration] = useState(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const requestRef = useRef<number | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
+  // Knob states
+  const [knobValues, setKnobValues] = useState({ gain: 45, tune: 10, mix: 90, fx: -120 });
+
+  // Clean up on unmount
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval>;
-    if (isRecording) {
-      interval = setInterval(() => setDuration(p => p + 1), 100);
-    } else {
-      setDuration(0);
-    }
-    return () => clearInterval(interval);
-  }, [isRecording]);
+    return () => {
+      if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
+      if (audioContextRef.current) audioContextRef.current.close();
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+    };
+  }, []);
 
-  const Dial = ({ label, angle }: { label: string, angle: number }) => (
-    <div className="bg-[#D1D0CC] rounded-xl flex flex-col items-center justify-center relative w-full h-full shadow-inner border border-white/20">
-      <div className="relative w-20 h-20 bg-[#1a1917] rounded-full flex items-center justify-center shadow-[0_4px_10px_rgba(0,0,0,0.2)]">
+  const toggleRecording = async () => {
+    if (isRecording) {
+      setIsRecording(false);
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      // Clear canvas
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext('2d');
+      if (canvas && ctx) {
+        ctx.fillStyle = '#0f1110';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Draw idle line
+        ctx.beginPath();
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 2;
+        ctx.moveTo(0, canvas.height / 2);
+        ctx.lineTo(canvas.width, canvas.height / 2);
+        ctx.stroke();
+      }
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef.current = stream;
+        
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+          // Fix for webkitAudioContext type error
+          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
+        } else {
+            audioContextRef.current.resume();
+        }
+
+        const audioCtx = audioContextRef.current;
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 512; // Higher resolution
+        const source = audioCtx.createMediaStreamSource(stream);
+        source.connect(analyser);
+        analyserRef.current = analyser;
+        
+        setIsRecording(true);
+        visualize();
+      } catch (err) {
+        console.error("Error accessing microphone:", err);
+        alert("Microphone access denied or not available.");
+      }
+    }
+  };
+
+  const visualize = () => {
+    if (!canvasRef.current || !analyserRef.current) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const analyser = analyserRef.current;
+    const bufferLength = analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const draw = () => {
+      requestRef.current = requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+
+      // Clear with slight transparency for trail effect
+      ctx.fillStyle = 'rgba(15, 17, 16, 0.4)'; 
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const barWidth = (canvas.width / bufferLength) * 2.5;
+      let barHeight;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        barHeight = dataArray[i] / 2; // Scale down
+
+        // Gradient Color
+        const r = barHeight + 100;
+        const g = 50;
+        const b = 50;
+        
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+
+        x += barWidth + 1;
+      }
+      
+      // Draw a center line
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+      ctx.moveTo(0, canvas.height / 2);
+      ctx.lineTo(canvas.width, canvas.height / 2);
+      ctx.stroke();
+    };
+
+    draw();
+  };
+
+  // Interactive Small Knob
+  const HardwareKnob = ({ label, propKey }: { label: string, propKey: keyof typeof knobValues }) => {
+    const knobRef = useRef<HTMLDivElement>(null);
+    const value = knobValues[propKey];
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+      e.preventDefault();
+      const element = knobRef.current;
+      if (!element) return;
+
+      const rect = element.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+        let delta = currentAngle - lastAngle;
+        
+        // Handle wrapping
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+
+        lastAngle = currentAngle;
+
+        setKnobValues(prev => ({
+          ...prev,
+          [propKey]: Math.min(180, Math.max(-180, prev[propKey] + delta))
+        }));
+      };
+
+      const handleMouseUp = () => {
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      document.body.style.cursor = 'grabbing';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    };
+
+    return (
+      <div className="flex flex-col items-center gap-2">
         <div 
-          className="absolute w-2.5 h-2.5 bg-[#EAB308] rounded-full shadow-[0_0_8px_rgba(234,179,8,0.6)]"
-          style={{ transform: `rotate(${angle}deg) translate(32px) rotate(-${angle}deg)` }}
-        />
+          ref={knobRef}
+          onMouseDown={handleMouseDown}
+          className="w-16 h-16 rounded-full relative shadow-[0_6px_10px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.2)] bg-stone-200 cursor-grab active:cursor-grabbing"
+          style={{ transform: `rotate(${value}deg)` }}
+        >
+          {/* Side of Knob (Depth) */}
+          <div className="absolute inset-0 rounded-full bg-gradient-to-b from-stone-200 to-stone-400"></div>
+          
+          {/* Top Face */}
+          <div className="absolute inset-[2px] rounded-full bg-[conic-gradient(from_180deg,#e5e7eb,#d1d5db,#9ca3af,#d1d5db,#e5e7eb)] shadow-[inset_0_1px_2px_rgba(255,255,255,0.8),inset_0_-1px_2px_rgba(0,0,0,0.2)] flex items-center justify-center">
+               {/* Grip Texture */}
+               <div className="w-full h-full rounded-full border-[6px] border-dashed border-stone-400/20"></div>
+               {/* Indicator */}
+               <div className="absolute top-1 w-1 h-5 bg-orange-500 rounded-full shadow-[0_0_2px_rgba(249,115,22,0.5)]"></div>
+          </div>
+        </div>
+        <span className="text-[9px] font-mono font-bold text-stone-500 uppercase tracking-widest select-none">{label}</span>
       </div>
-      <span className="absolute bottom-2 left-3 text-[9px] font-bold text-stone-500 uppercase tracking-widest">{label}</span>
-    </div>
-  );
+    );
+  };
 
   return (
     <Chassis label="OP-1 // Listener" active={isRecording}>
-      <div className="flex flex-col h-full gap-2">
-        {/* Screen */}
-        <div className="h-14 bg-[#C8C7C4] rounded-xl flex items-center justify-between px-4 border border-black/5 inner-shadow">
-           <span className={`font-mono text-2xl font-medium tabular-nums ${isRecording ? 'text-red-600' : 'text-stone-800'}`}>
-             {isRecording ? "REC" : "RDY"}
-           </span>
-           <div className="flex flex-col items-end">
-             <span className="text-[8px] font-mono text-stone-500">TAPE A</span>
-             <span className="text-[10px] font-mono text-stone-800 tabular-nums">
-               00:{(duration / 10).toFixed(1)}
-             </span>
-           </div>
+      <div className="flex flex-col h-full gap-4 pt-2">
+        
+        {/* Speaker Grille - Physical Detail */}
+        <div className="flex justify-center gap-1.5 opacity-40">
+           {[...Array(12)].map((_, i) => (
+             <div key={i} className="w-1 h-1 bg-black rounded-full shadow-[inset_0_1px_1px_rgba(255,255,255,0.5)]"></div>
+           ))}
         </div>
 
-        {/* Grid */}
-        <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-2">
-          <div className="cursor-pointer active:scale-95 transition-transform" onClick={() => setIsRecording(!isRecording)}>
-            <Dial label="Speed" angle={isRecording ? (Date.now() / 5) % 360 : 45} />
-          </div>
-          <Dial label="Rorare" angle={isRecording ? (Date.now() / 10) % 360 : 120} />
-          <Dial label="VOL" angle={-45} />
-          <Dial label="Effect" angle={90} />
+        {/* The Screen (OLED style) */}
+        <div className="h-28 bg-[#0f1110] rounded-xl border-2 border-stone-300 shadow-[inset_0_2px_8px_rgba(0,0,0,0.6)] relative overflow-hidden group">
+           {/* Canvas for Visualizer */}
+           <canvas 
+             ref={canvasRef} 
+             width={280} 
+             height={112} 
+             className="w-full h-full opacity-90"
+           />
+           
+           {/* Glass Reflection Overlay */}
+           <div className="absolute inset-0 bg-gradient-to-tr from-white/5 to-transparent pointer-events-none"></div>
+           
+           {/* Pixel Grid Texture */}
+           <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0IiBoZWlnaHQ9IjQiPgo8cmVjdCB3aWR0aD0iNCIgaGVpZ2h0PSI0IiBmaWxsPSIjMDAwIiBmaWxsLW9wYWNpdHk9IjAuMSIvPgo8L3N2Zz4=')] opacity-30 pointer-events-none"></div>
+
+           {/* UI Overlay */}
+           <div className="absolute top-2 left-3 flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse shadow-[0_0_8px_red]' : 'bg-stone-700'}`}></div>
+              <span className={`font-mono text-[10px] ${isRecording ? 'text-red-500' : 'text-stone-600'}`}>
+                {isRecording ? "REC [MIC ON]" : "STANDBY"}
+              </span>
+           </div>
+           {!isRecording && (
+             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <span className="font-mono text-xs text-stone-600 blink">PRESS REC</span>
+             </div>
+           )}
         </div>
+
+        {/* Controls Section */}
+        <div className="flex-1 flex flex-col justify-between pb-2">
+          
+          {/* Hardware Buttons Row */}
+          <div className="flex justify-between items-center px-2">
+             <button className="w-8 h-8 rounded bg-[#333] shadow-[0_2px_0_#111] active:shadow-none active:translate-y-[2px] border-t border-white/10 flex items-center justify-center">
+                <Play size={12} className="text-stone-400 fill-stone-400" />
+             </button>
+             {/* The Main Record Button */}
+             <button 
+               onClick={toggleRecording}
+               className={`
+                 w-12 h-12 rounded-full border-4 border-[#E3E2DE] shadow-[0_4px_6px_rgba(0,0,0,0.3),inset_0_2px_5px_rgba(0,0,0,0.2)]
+                 flex items-center justify-center transition-all active:scale-95
+                 ${isRecording ? 'bg-red-500 shadow-[inset_0_2px_8px_rgba(0,0,0,0.4)]' : 'bg-[#d63a3a]'}
+               `}
+             >
+                <div className="w-4 h-4 rounded-full bg-red-900/30"></div>
+             </button>
+             <button className="w-8 h-8 rounded bg-[#333] shadow-[0_2px_0_#111] active:shadow-none active:translate-y-[2px] border-t border-white/10 flex items-center justify-center">
+                <div className="w-3 h-3 bg-stone-400 rounded-[1px]"></div>
+             </button>
+          </div>
+
+          {/* Knobs Grid - Now with 3D physical look */}
+          <div className="grid grid-cols-4 gap-2 mt-4">
+             <HardwareKnob label="GAIN" propKey="gain" />
+             <HardwareKnob label="TUNE" propKey="tune" />
+             <HardwareKnob label="MIX" propKey="mix" />
+             <HardwareKnob label="FX" propKey="fx" />
+          </div>
+        </div>
+
       </div>
     </Chassis>
   );
@@ -147,6 +361,45 @@ export const HapticWidget = () => {
   const [grid, setGrid] = useState<boolean[]>(Array(16).fill(false));
   const [beat, setBeat] = useState(0);
   const [playing, setPlaying] = useState(false);
+  
+  const audioCtxRef = useRef<AudioContext | null>(null);
+
+  // C Minor Scale (Ascending for the 16 steps)
+  const frequencies = [
+    130.81, 146.83, 155.56, 174.61, // C3, D3, Eb3, F3
+    196.00, 207.65, 233.08, 261.63, // G3, Ab3, Bb3, C4
+    293.66, 311.13, 349.23, 392.00, // D4, Eb4, F4, G4
+    415.30, 466.16, 523.25, 587.33  // Ab4, Bb4, C5, D5
+  ];
+
+  const playNote = (index: number) => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    if (audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume();
+    }
+    
+    const ctx = audioCtxRef.current;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    // Smooth Sine Wave for Ambient feel
+    osc.type = 'sine';
+    osc.frequency.value = frequencies[index] || 440;
+    
+    // Envelope
+    const now = ctx.currentTime;
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.05); // Attack
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.8); // Long Decay/Release for ambience
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    osc.start(now);
+    osc.stop(now + 0.8);
+  };
 
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>;
@@ -160,10 +413,21 @@ export const HapticWidget = () => {
     return () => clearInterval(interval);
   }, [playing]);
 
+  // Effect to trigger sound on beat change
+  useEffect(() => {
+    if (playing && grid[beat]) {
+      playNote(beat);
+    }
+  }, [beat, playing, grid]);
+
   const toggleCell = (i: number) => {
     const newGrid = [...grid];
     newGrid[i] = !newGrid[i];
     setGrid(newGrid);
+    if (!newGrid[i]) {
+      // If turning ON, play a preview note
+      playNote(i);
+    }
   };
 
   return (
@@ -374,28 +638,56 @@ export const DialInWidget = () => {
   // Hardware Controls
   
   const RotaryKnob = () => {
-    // Simple drag interaction simulator
+    // Angular drag for the big dial
     const knobRef = useRef<HTMLDivElement>(null);
-    const handleMouseMove = (e: React.MouseEvent) => {
-      if (e.buttons !== 1) return;
-      // Just visually increment for demo
-      setKnobValue(prev => Math.min(100, Math.max(0, prev - e.movementY)));
+
+    const handleMouseDown = (e: React.MouseEvent) => {
+      e.preventDefault();
+      const element = knobRef.current;
+      if (!element) return;
+
+      const rect = element.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      
+      let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+        let delta = currentAngle - lastAngle;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+
+        lastAngle = currentAngle;
+
+        setKnobValue(prev => Math.min(100, Math.max(0, prev + (delta * 0.5))));
+      };
+
+      const handleMouseUp = () => {
+        document.body.style.cursor = '';
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+
+      document.body.style.cursor = 'grabbing';
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
     };
 
     return (
-      <div className="flex flex-col items-center justify-center gap-6" onMouseMove={handleMouseMove}>
+      <div className="flex flex-col items-center justify-center gap-6">
         <div 
           ref={knobRef}
+          onMouseDown={handleMouseDown}
           className="w-32 h-32 rounded-full bg-gradient-to-br from-stone-800 to-black shadow-[0_10px_20px_rgba(0,0,0,0.3),inset_0_2px_3px_rgba(255,255,255,0.1)] relative cursor-grab active:cursor-grabbing flex items-center justify-center border-4 border-[#2a2927]"
           style={{ transform: `rotate(${(knobValue / 100) * 270 - 135}deg)` }}
-          onMouseDown={() => {}}
         >
           {/* Indicator Line */}
           <div className="absolute top-2 w-1 h-6 bg-white rounded-full shadow-[0_0_5px_white]"></div>
           {/* Grip Texture */}
           <div className="absolute inset-0 rounded-full border-[12px] border-dashed border-stone-800/50 opacity-40"></div>
         </div>
-        <div className="text-xs font-mono text-stone-400 tracking-widest">{knobValue}%</div>
+        <div className="text-xs font-mono text-stone-400 tracking-widest">{knobValue.toFixed(0)}%</div>
       </div>
     );
   };
@@ -411,7 +703,6 @@ export const DialInWidget = () => {
           className="absolute h-8 w-12 bg-gradient-to-b from-[#f5f5f4] to-[#e7e5e4] rounded border border-stone-400 shadow-[0_4px_6px_rgba(0,0,0,0.2),inset_0_1px_0_white] cursor-grab active:cursor-grabbing flex items-center justify-center gap-0.5"
           style={{ left: `calc(${sliderValue}% - 24px)` }}
           onMouseDown={(e) => {
-            // Simplified interaction logic
             const rect = e.currentTarget.parentElement?.getBoundingClientRect();
             const update = (moveE: MouseEvent) => {
               if(!rect) return;
@@ -547,5 +838,169 @@ export const DialInWidget = () => {
         <div className="w-8 h-0.5 bg-stone-300 mx-auto rounded-full"></div>
       </div>
     </div>
+  );
+};
+
+// --- Component 6: The Tuner (Knob) ---
+export const KnobWidget = () => {
+  const [value, setValue] = useState(88.0);
+  const [isOn, setIsOn] = useState(false);
+  const [noise, setNoise] = useState(0);
+  const [targetFreq] = useState(94.2); // Hidden sweet spot
+  const [signalStrength, setSignalStrength] = useState(0);
+
+  // Simulation loop for noise and signal
+  useEffect(() => {
+    if (!isOn) {
+      setSignalStrength(0);
+      return;
+    }
+    const interval = setInterval(() => {
+      // Noise fluctuates randomly
+      setNoise(Math.random() * 5);
+      
+      // Calculate signal based on distance to target
+      const dist = Math.abs(value - targetFreq);
+      const strength = Math.max(0, 100 - (dist * 40)); // Tight tuning range
+      setSignalStrength(prev => strength > 80 ? strength + (Math.random() * 5) : strength); // jitter at high signal
+      
+    }, 100);
+    return () => clearInterval(interval);
+  }, [isOn, value, targetFreq]);
+
+  // Circular drag for the main tuner
+  const knobRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const element = knobRef.current;
+    if (!element) return;
+
+    const rect = element.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+      let delta = currentAngle - lastAngle;
+      
+      // Handle wrapping
+      if (delta > 180) delta -= 360;
+      if (delta < -180) delta += 360;
+
+      lastAngle = currentAngle;
+      
+      setValue(v => {
+        // Tuned for a weighted feel
+        const next = v + (delta * 0.05);
+        return Math.min(108, Math.max(88, next));
+      });
+    };
+
+    const handleMouseUp = () => {
+      document.body.style.cursor = '';
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.body.style.cursor = 'grabbing';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  const isTuned = signalStrength > 85;
+
+  return (
+    <Chassis label="KN-6 // Tuner" active={isOn && isTuned}>
+      <div className="flex flex-col h-full gap-5 relative">
+        
+        {/* Top Display Panel */}
+        <div className="h-24 bg-[#1a1917] rounded-lg border-2 border-[#D1D0CC] shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] p-3 relative overflow-hidden flex flex-col justify-between">
+            {/* LCD Screen */}
+            <div className={`font-mono text-3xl tabular-nums tracking-widest text-right transition-colors duration-100 ${isOn ? (isTuned ? 'text-[#EAB308] drop-shadow-[0_0_8px_rgba(234,179,8,0.6)]' : 'text-[#EAB308]/60') : 'text-[#2a2927]'}`}>
+               {isOn ? value.toFixed(1) : '88.8'} <span className="text-xs">FM</span>
+            </div>
+            
+            {/* Signal Meter Bar */}
+            <div className="flex items-center gap-2">
+               <span className="text-[8px] font-mono text-stone-500">SIGNAL</span>
+               <div className="flex-1 h-1.5 bg-[#2a2927] rounded-sm overflow-hidden flex gap-0.5">
+                  {[...Array(20)].map((_, i) => (
+                    <div 
+                      key={i} 
+                      className={`flex-1 rounded-[1px] transition-all duration-75 ${isOn && (signalStrength / 5) > i ? 'bg-green-500 shadow-[0_0_4px_green]' : 'bg-[#333]'}`} 
+                    />
+                  ))}
+               </div>
+            </div>
+
+            {/* Stereo Indicator */}
+            {isOn && isTuned && (
+              <div className="absolute top-2 left-3 flex items-center gap-1 animate-pulse">
+                 <div className="w-1.5 h-1.5 bg-red-500 rounded-full shadow-[0_0_4px_red]"></div>
+                 <span className="text-[8px] font-mono text-red-500">STEREO</span>
+              </div>
+            )}
+        </div>
+
+        {/* The Main Knob */}
+        <div className="flex-1 flex items-center justify-center relative">
+            <div 
+              ref={knobRef}
+              onMouseDown={handleMouseDown}
+              className="w-40 h-40 rounded-full bg-gradient-to-br from-[#e5e5e5] to-[#a3a3a3] shadow-[0_10px_25px_rgba(0,0,0,0.4),0_2px_5px_rgba(0,0,0,0.2)] flex items-center justify-center relative cursor-grab active:cursor-grabbing group"
+            >
+               {/* Side Knurling Illusion */}
+               <div className="absolute inset-0 rounded-full border-[10px] border-stone-300 border-dashed opacity-50"></div>
+               
+               {/* Top Face */}
+               <div className="w-32 h-32 rounded-full bg-[conic-gradient(from_180deg,#f5f5f5,#e5e5e5,#d4d4d4,#e5e5e5,#f5f5f5)] shadow-[inset_0_2px_4px_rgba(255,255,255,1),inset_0_-2px_4px_rgba(0,0,0,0.1)] flex items-center justify-center transform transition-transform duration-75"
+                    style={{ transform: `rotate(${(value - 88) * 15}deg)` }}
+               >
+                  {/* Finger indentation */}
+                  <div className="w-5 h-5 bg-stone-200 rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)] absolute top-4"></div>
+                  {/* Center screw */}
+                  <div className="w-2 h-2 bg-stone-400 rounded-full flex items-center justify-center"><div className="w-full h-px bg-stone-500"></div></div>
+               </div>
+            </div>
+            
+            {/* Frequency Scale Markings around knob */}
+            <div className="absolute inset-0 pointer-events-none">
+                {[0, 45, 90, 135, 180, 225, 270, 315].map((deg) => (
+                  <div key={deg} className="absolute w-1 h-2 bg-stone-400/50" 
+                       style={{ 
+                         top: '50%', left: '50%', 
+                         transform: `translate(-50%, -50%) rotate(${deg}deg) translateY(-90px)` 
+                       }} 
+                  />
+                ))}
+            </div>
+        </div>
+
+        {/* Bottom Switches */}
+        <div className="h-16 flex items-center justify-between px-8 bg-[#d6d3d1]/20 rounded-xl">
+           <div className="flex flex-col items-center gap-1">
+              <button 
+                onClick={() => setIsOn(!isOn)}
+                className={`w-12 h-6 rounded-full flex items-center px-1 transition-colors ${isOn ? 'bg-orange-500 justify-end' : 'bg-stone-400 justify-start'}`}
+              >
+                 <div className="w-4 h-4 bg-white rounded-full shadow-md"></div>
+              </button>
+              <span className="text-[8px] font-mono font-bold text-stone-500">POWER</span>
+           </div>
+
+           <div className="flex flex-col items-center gap-1 opacity-60">
+             <div className="flex gap-2">
+               <div className="w-1 h-4 bg-stone-400 rounded-sm"></div>
+               <div className="w-1 h-4 bg-stone-800 rounded-sm"></div>
+             </div>
+             <span className="text-[8px] font-mono font-bold text-stone-500">AM/FM</span>
+           </div>
+        </div>
+
+      </div>
+    </Chassis>
   );
 };
