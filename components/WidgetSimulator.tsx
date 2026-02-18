@@ -5,8 +5,8 @@ import { Zap, Aperture, Maximize, Grid3X3, Circle, Play, Plus, Minus, ChevronUp,
 const Chassis: React.FC<{ children: React.ReactNode; label: string; active?: boolean }> = ({ children, label, active }) => (
   <div className="flex flex-col items-center gap-6 group perspective-1000">
     <div className={`
-      w-[320px] h-[340px] bg-[#E3E2DE] rounded-[32px] p-4 shadow-2xl flex flex-col relative overflow-hidden
-      transition-all duration-500 ease-out transform group-hover:rotate-x-2 group-hover:rotate-y-2
+      w-[88vw] max-w-[320px] h-[340px] bg-[#E3E2DE] rounded-[32px] p-4 shadow-2xl flex flex-col relative overflow-hidden
+      transition-all duration-500 ease-out transform md:group-hover:rotate-x-2 md:group-hover:rotate-y-2
       border border-white/40 ring-1 ring-black/5
     `}>
       {/* Noise Texture Overlay */}
@@ -33,7 +33,7 @@ const Chassis: React.FC<{ children: React.ReactNode; label: string; active?: boo
 
     </div>
     
-    <div className="text-center space-y-1 opacity-60 group-hover:opacity-100 transition-opacity">
+    <div className="text-center space-y-1 opacity-60 md:opacity-60 md:group-hover:opacity-100 transition-opacity">
       <h3 className="font-mono text-xs uppercase tracking-[0.2em] text-stone-900 font-bold">{label}</h3>
       <div className="w-8 h-0.5 bg-stone-300 mx-auto rounded-full"></div>
     </div>
@@ -105,7 +105,7 @@ export const AudioWidget = () => {
         visualize();
       } catch (err) {
         console.error("Error accessing microphone:", err);
-        alert("Microphone access denied or not available.");
+        alert("Microphone access denied or not available. Ensure you are using HTTPS.");
       }
     }
   };
@@ -163,8 +163,7 @@ export const AudioWidget = () => {
     const knobRef = useRef<HTMLDivElement>(null);
     const value = knobValues[propKey];
 
-    const handleMouseDown = (e: React.MouseEvent) => {
-      e.preventDefault();
+    const startInteraction = (clientX: number, clientY: number) => {
       const element = knobRef.current;
       if (!element) return;
 
@@ -172,10 +171,10 @@ export const AudioWidget = () => {
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       
-      let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+      let lastAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+      const handleMove = (x: number, y: number) => {
+        const currentAngle = Math.atan2(y - centerY, x - centerX) * (180 / Math.PI);
         let delta = currentAngle - lastAngle;
         
         // Handle wrapping
@@ -190,23 +189,34 @@ export const AudioWidget = () => {
         }));
       };
 
-      const handleMouseUp = () => {
+      const handleMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
+      const handleTouchMove = (e: TouchEvent) => {
+        e.preventDefault(); // Prevent scrolling while adjusting knob
+        handleMove(e.touches[0].clientX, e.touches[0].clientY);
+      };
+
+      const stopInteraction = () => {
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('mouseup', stopInteraction);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', stopInteraction);
       };
 
       document.body.style.cursor = 'grabbing';
       window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('mouseup', stopInteraction);
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', stopInteraction);
     };
 
     return (
       <div className="flex flex-col items-center gap-2">
         <div 
           ref={knobRef}
-          onMouseDown={handleMouseDown}
-          className="w-16 h-16 rounded-full relative shadow-[0_6px_10px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.2)] bg-stone-200 cursor-grab active:cursor-grabbing"
+          onMouseDown={(e) => { e.preventDefault(); startInteraction(e.clientX, e.clientY); }}
+          onTouchStart={(e) => { startInteraction(e.touches[0].clientX, e.touches[0].clientY); }}
+          className="w-16 h-16 rounded-full relative shadow-[0_6px_10px_rgba(0,0,0,0.4),0_2px_4px_rgba(0,0,0,0.2)] bg-stone-200 cursor-grab active:cursor-grabbing touch-none"
           style={{ transform: `rotate(${value}deg)` }}
         >
           {/* Side of Knob (Depth) */}
@@ -307,7 +317,6 @@ export const AudioWidget = () => {
 // --- Component 2: The Observer (Visual) ---
 export const VisualWidget = () => {
   const [active, setActive] = useState(false);
-  const [zoom, setZoom] = useState(50);
 
   return (
     <Chassis label="OB-4 // Observer" active={active}>
@@ -376,6 +385,7 @@ export const HapticWidget = () => {
     if (!audioCtxRef.current) {
       audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
+    // Resume context if suspended (common in mobile)
     if (audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume();
     }
@@ -502,8 +512,8 @@ export const KarriWidget = () => {
   return (
     <div className="group perspective-1000 flex flex-col items-center gap-6">
       <div className={`
-        w-[320px] h-[480px] bg-[#4B8BF5] rounded-[40px] p-6 shadow-2xl flex flex-col relative
-        transition-all duration-500 ease-out transform group-hover:rotate-x-2 group-hover:rotate-y-2
+        w-[88vw] max-w-[320px] h-[480px] bg-[#4B8BF5] rounded-[40px] p-6 shadow-2xl flex flex-col relative
+        transition-all duration-500 ease-out transform md:group-hover:rotate-x-2 md:group-hover:rotate-y-2
         border-t border-l border-white/20 ring-1 ring-black/10
       `}>
         {/* Top Buttons (Triggers) */}
@@ -534,6 +544,8 @@ export const KarriWidget = () => {
                 onMouseDown={() => setIsTalking(true)}
                 onMouseUp={() => setIsTalking(false)}
                 onMouseLeave={() => setIsTalking(false)}
+                onTouchStart={(e) => { e.preventDefault(); setIsTalking(true); }}
+                onTouchEnd={() => setIsTalking(false)}
                 className={`
                   w-14 h-32 rounded-[28px] transition-all duration-100 ease-out
                   ${isTalking 
@@ -564,7 +576,7 @@ export const KarriWidget = () => {
         </div>
 
       </div>
-       <div className="text-center space-y-1 opacity-60 group-hover:opacity-100 transition-opacity">
+       <div className="text-center space-y-1 opacity-60 md:opacity-60 md:group-hover:opacity-100 transition-opacity">
         <h3 className="font-mono text-xs uppercase tracking-[0.2em] text-stone-900 font-bold">R-01 // KARRI</h3>
         <div className="w-8 h-0.5 bg-stone-300 mx-auto rounded-full"></div>
       </div>
@@ -638,11 +650,9 @@ export const DialInWidget = () => {
   // Hardware Controls
   
   const RotaryKnob = () => {
-    // Angular drag for the big dial
     const knobRef = useRef<HTMLDivElement>(null);
 
-    const handleMouseDown = (e: React.MouseEvent) => {
-      e.preventDefault();
+    const startInteraction = (clientX: number, clientY: number) => {
       const element = knobRef.current;
       if (!element) return;
 
@@ -650,10 +660,10 @@ export const DialInWidget = () => {
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
       
-      let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+      let lastAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
 
-      const handleMouseMove = (moveEvent: MouseEvent) => {
-        const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+      const handleMove = (x: number, y: number) => {
+        const currentAngle = Math.atan2(y - centerY, x - centerX) * (180 / Math.PI);
         let delta = currentAngle - lastAngle;
         if (delta > 180) delta -= 360;
         if (delta < -180) delta += 360;
@@ -663,23 +673,34 @@ export const DialInWidget = () => {
         setKnobValue(prev => Math.min(100, Math.max(0, prev + (delta * 0.5))));
       };
 
-      const handleMouseUp = () => {
+      const handleMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
+      const handleTouchMove = (e: TouchEvent) => {
+        e.preventDefault();
+        handleMove(e.touches[0].clientX, e.touches[0].clientY);
+      };
+
+      const stopInteraction = () => {
         document.body.style.cursor = '';
         window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
+        window.removeEventListener('mouseup', stopInteraction);
+        window.removeEventListener('touchmove', handleTouchMove);
+        window.removeEventListener('touchend', stopInteraction);
       };
 
       document.body.style.cursor = 'grabbing';
       window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('mouseup', stopInteraction);
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', stopInteraction);
     };
 
     return (
       <div className="flex flex-col items-center justify-center gap-6">
         <div 
           ref={knobRef}
-          onMouseDown={handleMouseDown}
-          className="w-32 h-32 rounded-full bg-gradient-to-br from-stone-800 to-black shadow-[0_10px_20px_rgba(0,0,0,0.3),inset_0_2px_3px_rgba(255,255,255,0.1)] relative cursor-grab active:cursor-grabbing flex items-center justify-center border-4 border-[#2a2927]"
+          onMouseDown={(e) => { e.preventDefault(); startInteraction(e.clientX, e.clientY); }}
+          onTouchStart={(e) => { startInteraction(e.touches[0].clientX, e.touches[0].clientY); }}
+          className="w-32 h-32 rounded-full bg-gradient-to-br from-stone-800 to-black shadow-[0_10px_20px_rgba(0,0,0,0.3),inset_0_2px_3px_rgba(255,255,255,0.1)] relative cursor-grab active:cursor-grabbing flex items-center justify-center border-4 border-[#2a2927] touch-none"
           style={{ transform: `rotate(${(knobValue / 100) * 270 - 135}deg)` }}
         >
           {/* Indicator Line */}
@@ -692,45 +713,66 @@ export const DialInWidget = () => {
     );
   };
 
-  const Slider = () => (
-    <div className="w-full px-4 flex flex-col items-center gap-4">
-      <div className="w-full h-3 bg-[#d6d3d1] rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] relative flex items-center">
-        {/* Track Fill */}
-        <div className="h-full bg-orange-900/10 rounded-l-full" style={{ width: `${sliderValue}%` }}></div>
+  const Slider = () => {
+    const handleStart = (clientX: number, target: HTMLElement) => {
+        const rect = target.parentElement?.getBoundingClientRect();
         
-        {/* Handle */}
-        <div 
-          className="absolute h-8 w-12 bg-gradient-to-b from-[#f5f5f4] to-[#e7e5e4] rounded border border-stone-400 shadow-[0_4px_6px_rgba(0,0,0,0.2),inset_0_1px_0_white] cursor-grab active:cursor-grabbing flex items-center justify-center gap-0.5"
-          style={{ left: `calc(${sliderValue}% - 24px)` }}
-          onMouseDown={(e) => {
-            const rect = e.currentTarget.parentElement?.getBoundingClientRect();
-            const update = (moveE: MouseEvent) => {
-              if(!rect) return;
-              const x = moveE.clientX - rect.left;
-              const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
-              setSliderValue(pct);
-            };
-            const stop = () => {
-              window.removeEventListener('mousemove', update);
-              window.removeEventListener('mouseup', stop);
-              handleSubmit();
-            };
-            window.addEventListener('mousemove', update);
-            window.addEventListener('mouseup', stop);
-          }}
-        >
-          {/* Grip lines */}
-          <div className="w-px h-4 bg-stone-300"></div>
-          <div className="w-px h-4 bg-stone-300"></div>
-          <div className="w-px h-4 bg-stone-300"></div>
+        const update = (currentX: number) => {
+            if(!rect) return;
+            const x = currentX - rect.left;
+            const pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+            setSliderValue(pct);
+        };
+
+        const stop = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', stop);
+            window.removeEventListener('touchmove', onTouchMove);
+            window.removeEventListener('touchend', stop);
+            handleSubmit();
+        };
+
+        const onMouseMove = (e: MouseEvent) => update(e.clientX);
+        const onTouchMove = (e: TouchEvent) => {
+            e.preventDefault();
+            update(e.touches[0].clientX);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', stop);
+        window.addEventListener('touchmove', onTouchMove, { passive: false });
+        window.addEventListener('touchend', stop);
+        
+        // Initial update
+        update(clientX);
+    };
+
+    return (
+      <div className="w-full px-4 flex flex-col items-center gap-4">
+        <div className="w-full h-3 bg-[#d6d3d1] rounded-full shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] relative flex items-center">
+          {/* Track Fill */}
+          <div className="h-full bg-orange-900/10 rounded-l-full" style={{ width: `${sliderValue}%` }}></div>
+          
+          {/* Handle */}
+          <div 
+            className="absolute h-8 w-12 bg-gradient-to-b from-[#f5f5f4] to-[#e7e5e4] rounded border border-stone-400 shadow-[0_4px_6px_rgba(0,0,0,0.2),inset_0_1px_0_white] cursor-grab active:cursor-grabbing flex items-center justify-center gap-0.5 touch-none"
+            style={{ left: `calc(${sliderValue}% - 24px)` }}
+            onMouseDown={(e) => handleStart(e.clientX, e.currentTarget)}
+            onTouchStart={(e) => handleStart(e.touches[0].clientX, e.currentTarget)}
+          >
+            {/* Grip lines */}
+            <div className="w-px h-4 bg-stone-300"></div>
+            <div className="w-px h-4 bg-stone-300"></div>
+            <div className="w-px h-4 bg-stone-300"></div>
+          </div>
+        </div>
+        <div className="flex justify-between w-full text-[10px] font-mono font-bold text-stone-400 uppercase">
+          <span>Empty</span>
+          <span>Full</span>
         </div>
       </div>
-      <div className="flex justify-between w-full text-[10px] font-mono font-bold text-stone-400 uppercase">
-        <span>Empty</span>
-        <span>Full</span>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const ToggleSwitch = () => (
     <div className="flex flex-col items-center gap-4">
@@ -783,8 +825,8 @@ export const DialInWidget = () => {
   return (
     <div className="flex flex-col items-center gap-6 group perspective-1000">
       <div className={`
-        w-[320px] h-[340px] rounded-[32px] p-6 shadow-2xl flex flex-col relative overflow-hidden
-        transition-all duration-500 ease-out transform group-hover:rotate-x-2 group-hover:rotate-y-2
+        w-[88vw] max-w-[320px] h-[340px] rounded-[32px] p-6 shadow-2xl flex flex-col relative overflow-hidden
+        transition-all duration-500 ease-out transform md:group-hover:rotate-x-2 md:group-hover:rotate-y-2
         border border-white/10 ring-1 ring-black/5
         ${currentConfig.color}
       `}>
@@ -833,7 +875,7 @@ export const DialInWidget = () => {
 
       </div>
       
-      <div className="text-center space-y-1 opacity-60 group-hover:opacity-100 transition-opacity">
+      <div className="text-center space-y-1 opacity-60 md:opacity-60 md:group-hover:opacity-100 transition-opacity">
         <h3 className="font-mono text-xs uppercase tracking-[0.2em] text-stone-900 font-bold">BR-5 // DIAL IN</h3>
         <div className="w-8 h-0.5 bg-stone-300 mx-auto rounded-full"></div>
       </div>
@@ -871,8 +913,7 @@ export const KnobWidget = () => {
   // Circular drag for the main tuner
   const knobRef = useRef<HTMLDivElement>(null);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
+  const startInteraction = (clientX: number, clientY: number) => {
     const element = knobRef.current;
     if (!element) return;
 
@@ -880,10 +921,10 @@ export const KnobWidget = () => {
     const centerX = rect.left + rect.width / 2;
     const centerY = rect.top + rect.height / 2;
     
-    let lastAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * (180 / Math.PI);
+    let lastAngle = Math.atan2(clientY - centerY, clientX - centerX) * (180 / Math.PI);
 
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const currentAngle = Math.atan2(moveEvent.clientY - centerY, moveEvent.clientX - centerX) * (180 / Math.PI);
+    const handleMove = (x: number, y: number) => {
+      const currentAngle = Math.atan2(y - centerY, x - centerX) * (180 / Math.PI);
       let delta = currentAngle - lastAngle;
       
       // Handle wrapping
@@ -899,15 +940,25 @@ export const KnobWidget = () => {
       });
     };
 
-    const handleMouseUp = () => {
+    const handleMouseMove = (e: MouseEvent) => handleMove(e.clientX, e.clientY);
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      handleMove(e.touches[0].clientX, e.touches[0].clientY);
+    };
+
+    const stopInteraction = () => {
       document.body.style.cursor = '';
       window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('mouseup', stopInteraction);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', stopInteraction);
     };
 
     document.body.style.cursor = 'grabbing';
     window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('mouseup', stopInteraction);
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchend', stopInteraction);
   };
 
   const isTuned = signalStrength > 85;
@@ -949,8 +1000,9 @@ export const KnobWidget = () => {
         <div className="flex-1 flex items-center justify-center relative">
             <div 
               ref={knobRef}
-              onMouseDown={handleMouseDown}
-              className="w-40 h-40 rounded-full bg-gradient-to-br from-[#e5e5e5] to-[#a3a3a3] shadow-[0_10px_25px_rgba(0,0,0,0.4),0_2px_5px_rgba(0,0,0,0.2)] flex items-center justify-center relative cursor-grab active:cursor-grabbing group"
+              onMouseDown={(e) => { e.preventDefault(); startInteraction(e.clientX, e.clientY); }}
+              onTouchStart={(e) => { startInteraction(e.touches[0].clientX, e.touches[0].clientY); }}
+              className="w-40 h-40 rounded-full bg-gradient-to-br from-[#e5e5e5] to-[#a3a3a3] shadow-[0_10px_25px_rgba(0,0,0,0.4),0_2px_5px_rgba(0,0,0,0.2)] flex items-center justify-center relative cursor-grab active:cursor-grabbing group touch-none"
             >
                {/* Side Knurling Illusion */}
                <div className="absolute inset-0 rounded-full border-[10px] border-stone-300 border-dashed opacity-50"></div>
